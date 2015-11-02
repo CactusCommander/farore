@@ -1,7 +1,10 @@
+extern crate itertools;
+
+mod cartridge;
+
 use std::fs::File;
 use std::io::{BufReader, Read, stdout};
 
-mod cartridge;
 
 fn main() {
     let rom_path: String;

@@ -2,3 +2,6 @@
 name = "farore"
 version = "0.1.0"
 authors = ["Erich Healy"]
+
+[dependencies]
+itertools = "0.3"
