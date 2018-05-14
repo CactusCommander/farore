@@ -1,11 +1,14 @@
 use std::num::Wrapping;
 use std::io::Write;
-use itertools;
+use std::error::Error;
 
-static NINTENDO_BITMAP_EXPECTED: [u8; 48] = [
-    0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
-    0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
-    0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+use byteorder::{ByteOrder, BigEndian};
+use sha1;
+
+
+static LOGO_BITMAP_HASH: [u8; 20] = [
+    0x07, 0x45, 0xFD, 0xEF, 0x34, 0x13, 0x2D, 0x1B, 0x3D, 0x48,
+    0x8C, 0xFB, 0xDF, 0x03, 0x79, 0xA3, 0x9F, 0xD5, 0x4B, 0x4C,
 ];
 
 #[derive(Debug, Copy, Clone)]
@@ -61,14 +64,14 @@ impl SuperGameboyFeatureFlag {
     }
 }
 
-fn calculate_header_checksum(buf: &Vec<u8>) -> u8 {
+fn calculate_header_checksum(buf: &[u8]) -> u8 {
     // x=0:FOR i=0134h TO 014Ch:x=x-MEM[i]-1:NEXT
-    buf.iter().skip(0x0134).take(0x014C - 0x0134 + 1).cloned()
-        .fold(Wrapping(0u8), |acc, x| acc - Wrapping(x) - Wrapping(1u8)).0
+    buf.into_iter().skip(0x0134).take(0x014C - 0x0134 + 1)
+        .fold(Wrapping(0u8), |acc, &x| acc - Wrapping(x) - Wrapping(1u8)).0
 }
 
-fn calculate_global_checksum(buf: &Vec<u8>) -> u16 {
-    let iter = buf.iter().cloned().enumerate().filter_map(|(i, x)| {
+fn calculate_global_checksum(buf: &[u8]) -> u16 {
+    let iter = buf.into_iter().enumerate().filter_map(|(i, &x)| {
         match i {
             0x014E => None,
             0x014F => None,
@@ -79,10 +82,10 @@ fn calculate_global_checksum(buf: &Vec<u8>) -> u16 {
     return iter.fold(Wrapping(0u16), |acc, x| acc + Wrapping(x as u16)).0;
 }
 
-pub struct GameboyProgramMeta {
-    pub name: String,  // On newer games the name is clamped to 9 chars.  Extra space is used for manufacturer code.
-    pub manufacturer_code: [u8; 4],
-    pub licensee_code: Vec<u8>,  // Newer games are 0x0144-0x0145.  OIlder games are 0x14B
+pub struct GameboyProgramMeta<'a> {
+    pub name: &'a str,  // On newer games the name is clamped to 9 chars.  Extra space is used for manufacturer code.
+    pub manufacturer_code: &'a [u8],
+    pub licensee_code: Vec<u8>,  // Newer games are 0x0144-0x0145.  Older games are 0x14B
     color_flag: GameboyColorFlag, // 0x80 = Backwards compatible with non-CGB, 0xC0 = CGB only.
     super_gameboy_flag: SuperGameboyFeatureFlag, // 0x00 = no SGB, 0x03 = SGB
     features_flag: u8, // 0x0147, Cartridge Type.  Indicates extra hardware on cartridge.
@@ -95,14 +98,21 @@ pub struct GameboyProgramMeta {
 
     header_checksum_calculated: u8,
     global_checksum_calculated: u16,
-    nintendo_bitmap: [u8; 48],
+    logo_bitmap: &'a [u8],
     pub program_size: usize,
 }
 
-impl GameboyProgramMeta {
-    pub fn new(program: &Vec<u8>) -> GameboyProgramMeta {
+fn bufstr(buf: &[u8]) -> Result<&str, Box<Error>> {
+    let first_zero = buf.into_iter().enumerate().find(|(_idx, &x)| x == 0).map(|(idx, _)| idx);
+    let chars = match first_zero {
+        Some(i) => &buf[0..i],
+        None => buf,
+    };
+    ::std::str::from_utf8(chars).map_err(|e| e.into())
+}
 
-        let name: String = program.iter().skip(0x0134).take(0x0143 - 0x0134 + 1).take_while(|&x| *x != 0).map(|&x| x as char).collect();
+impl<'a> GameboyProgramMeta<'a> {
+    pub fn new(program: &[u8]) -> Result<GameboyProgramMeta, Box<Error>> {
 
         // older carts have a licensee code at 0x014B, but newer carts reserve 2 bytes for it at
         // 0x0144 and set the old licensee code to 0x33 to indicate the newer licensee code form.
@@ -113,15 +123,12 @@ impl GameboyProgramMeta {
 
         // Each cart must have the nintendo logo copied bit-for-bit at 0x0104-0x0133
         // Failing this assertion causes the gameboy to halt.
-        let mut logo = [0; 48];
-        for index in (0..48) {
-            logo[index] = program[0x104 + index];
-        }
+        let logo = &program[0x104..0x104+48];
 
 
-        GameboyProgramMeta {
-            name: name,
-            manufacturer_code: [program[0x013F], program[0x0140], program[0x141], program[0x142]],
+        Ok(GameboyProgramMeta {
+            name: bufstr(&program[0x0134..0x0143])?,
+            manufacturer_code: &program[0x13F..0x143],
             licensee_code: l_code,
             color_flag: GameboyColorFlag::new(program[0x0143]),
             super_gameboy_flag: SuperGameboyFeatureFlag::new(program[0x0146]),
@@ -131,17 +138,22 @@ impl GameboyProgramMeta {
             region_code: GameboyRegionCode::new(program[0x014A]),
             program_version_number: program[0x014C],
             header_checksum: program[0x014D],
-            global_checksum: program[0x014E] as u16 | ((program[0x014F] as u16) << 8usize),
+            global_checksum: BigEndian::read_u16(&program[0x14E..0x150]),
 
             header_checksum_calculated: calculate_header_checksum(&program),
             global_checksum_calculated: calculate_global_checksum(&program),
-            nintendo_bitmap: logo,
+            logo_bitmap: logo,
             program_size: program.len(),
-        }
+        })
     }
 
     pub fn is_valid_logo(&self) -> bool {
-        itertools::equal(self.nintendo_bitmap.iter(), NINTENDO_BITMAP_EXPECTED.iter())
+        if self.logo_bitmap.len() != 48 {
+            return false;
+        }
+
+        let digest = sha1::Sha1::from(self.logo_bitmap).digest().bytes();
+        digest.iter().zip(LOGO_BITMAP_HASH.iter()).all(|(&a, &b)| a == b)
     }
 
     pub fn is_valid_header(&self) -> bool {

@@ -1,12 +1,13 @@
-extern crate itertools;
+extern crate sha1;
+extern crate byteorder;
 
-mod cartridge;
+mod cart;
 
 use std::fs::File;
 use std::io::{BufReader, Read, stdout};
 
 
-fn main() {
+fn main() -> Result<(), Box<::std::error::Error>> {
     let rom_path: String;
     match std::env::args().nth(1) {
         Some(x) => {
@@ -14,8 +15,8 @@ fn main() {
             rom_path = x;
         },
         None => {
-            println!("Requires a rom at parameter 1.");
-            return;
+            eprintln!("Requires a rom at parameter 1.");
+            return Ok(());
         },
     }
 
@@ -25,6 +26,7 @@ fn main() {
         Err(..) => panic!("Unable to open file {}", rom_path),
     };
 
-    let meta = cartridge::GameboyProgramMeta::new(&rom_buf);
+    let meta = cart::GameboyProgramMeta::new(&rom_buf)?;
     meta.print_debug(&mut stdout());
+    Ok(())
 }
