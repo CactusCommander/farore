@@ -88,9 +88,9 @@ pub struct GameboyProgramMeta<'a> {
     pub licensee_code: Vec<u8>,  // Newer games are 0x0144-0x0145.  Older games are 0x14B
     color_flag: GameboyColorFlag, // 0x80 = Backwards compatible with non-CGB, 0xC0 = CGB only.
     super_gameboy_flag: SuperGameboyFeatureFlag, // 0x00 = no SGB, 0x03 = SGB
-    features_flag: u8, // 0x0147, Cartridge Type.  Indicates extra hardware on cartridge.
-    cartridge_size_indicator: u8,  // Rom size uses this through a translation table times 32k
-    ram_size_indicator: u8,  // Again uses a translation table.  Size of cold storage on cartridge
+    cart_type: u8, // 0x0147, Cartridge Type.  Indicates extra hardware on cartridge.
+    rom_size: u8,  // Rom size uses this through a translation table times 32k
+    ram_size: u8,  // Again uses a translation table.  Size of cold storage on cartridge
     region_code: GameboyRegionCode, // 0x00 = japanese, 0x01 = non-japanese.
     program_version_number: u8,
     header_checksum: u8, // Game will not boot if this fails. pseudocode: x=0:FOR i=0134h TO 014Ch:x=x-MEM[i]-1:NEXT
@@ -112,38 +112,38 @@ fn bufstr(buf: &[u8]) -> Result<&str, Box<Error>> {
 }
 
 impl<'a> GameboyProgramMeta<'a> {
-    pub fn new(program: &[u8]) -> Result<GameboyProgramMeta, Box<Error>> {
+    pub fn new(rom: &[u8]) -> Result<GameboyProgramMeta, Box<Error>> {
 
         // older carts have a licensee code at 0x014B, but newer carts reserve 2 bytes for it at
         // 0x0144 and set the old licensee code to 0x33 to indicate the newer licensee code form.
-        let l_code = match program[0x014B] {
-            0x33 => vec![program[0x0144], program[0x0145]],
+        let l_code = match rom[0x014B] {
+            0x33 => vec![rom[0x0144], rom[0x0145]],
             x    => vec![x]
         };
 
         // Each cart must have the nintendo logo copied bit-for-bit at 0x0104-0x0133
         // Failing this assertion causes the gameboy to halt.
-        let logo = &program[0x104..0x104+48];
+        let logo = &rom[0x104..0x104+48];
 
 
         Ok(GameboyProgramMeta {
-            name: bufstr(&program[0x0134..0x0143])?,
-            manufacturer_code: &program[0x13F..0x143],
+            name: bufstr(&rom[0x0134..0x0143])?,
+            manufacturer_code: &rom[0x13F..0x143],
             licensee_code: l_code,
-            color_flag: GameboyColorFlag::new(program[0x0143]),
-            super_gameboy_flag: SuperGameboyFeatureFlag::new(program[0x0146]),
-            features_flag: program[0x0147],
-            cartridge_size_indicator: program[0x0148],
-            ram_size_indicator: program[0x0149],
-            region_code: GameboyRegionCode::new(program[0x014A]),
-            program_version_number: program[0x014C],
-            header_checksum: program[0x014D],
-            global_checksum: BigEndian::read_u16(&program[0x14E..0x150]),
+            color_flag: GameboyColorFlag::new(rom[0x0143]),
+            super_gameboy_flag: SuperGameboyFeatureFlag::new(rom[0x0146]),
+            cart_type: rom[0x0147],
+            rom_size: rom[0x0148],
+            ram_size: rom[0x0149],
+            region_code: GameboyRegionCode::new(rom[0x014A]),
+            program_version_number: rom[0x014C],
+            header_checksum: rom[0x014D],
+            global_checksum: BigEndian::read_u16(&rom[0x14E..0x150]),
 
-            header_checksum_calculated: calculate_header_checksum(&program),
-            global_checksum_calculated: calculate_global_checksum(&program),
+            header_checksum_calculated: calculate_header_checksum(&rom),
+            global_checksum_calculated: calculate_global_checksum(&rom),
             logo_bitmap: logo,
-            program_size: program.len(),
+            program_size: rom.len(),
         })
     }
 
@@ -191,9 +191,9 @@ impl<'a> GameboyProgramMeta<'a> {
         writeln!(writer, "licensee code: {:?}", self.licensee_code).ok();
         writeln!(writer, "color flag: {:?}", self.color_flag).ok();
         writeln!(writer, "super flag: {:?}", self.super_gameboy_flag).ok();
-        writeln!(writer, "features flag: {:?}", self.features_flag).ok();
-        writeln!(writer, "size indicator: {:?}", self.cartridge_size_indicator).ok();
-        writeln!(writer, "ram indiciator: {:?}", self.ram_size_indicator).ok();
+        writeln!(writer, "cart type: {:?}", self.cart_type).ok();
+        writeln!(writer, "ROM size indicator: {:?}", self.rom_size).ok();
+        writeln!(writer, "RAM size indiciator: {:?}", self.ram_size).ok();
         writeln!(writer, "region code: {:?}", self.region_code).ok();
         writeln!(writer, "version number: {:?}", self.program_version_number).ok();
         writeln!(writer, "header checksum: Declared({0:?}) Calculated({1:?})", self.header_checksum, self.header_checksum_calculated).ok();
